@@ -21,6 +21,7 @@ class MemN2NDialog(nn.Module):
 	"""docstring for MemN2NDialog"""
 	def __init__(self, batch_size, vocab_size, candidates_size, sentence_size, embedding_size,
 				candidates_vec,
+				candidates_mask,
 				hops=3,
 				max_grad_norm=40.0,
 				nonlin=None,
@@ -39,9 +40,10 @@ class MemN2NDialog(nn.Module):
 		self.nonlin = nonlin
 		self.name = name
 		self.candidates = candidates_vec
+		self.candidates_mask = candidates_mask
 
 		self.embed_A = nn.Embedding(self.vocab_size, self.embedding_size) 
-		self.linear_H = nn.Linear(self.embedding_size, self.embedding_size)
+		self.linear_H = nn.Linear(self.embedding_size * 2, self.embedding_size * 2)
 		self.embed_W = nn.Embedding(self.vocab_size, self.embedding_size)
 
 		self.softmax = nn.Softmax()
@@ -72,7 +74,8 @@ class MemN2NDialog(nn.Module):
 		query_mask_emb = self.embed_A(query_mask)
 
 		# aplly query mask (add_)
-		query_emb.add_(query_mask_emb)
+		# query_emb.add_(query_mask_emb)
+		query_emb = torch.cat([query_emb, query_mask_emb], 2)
 		query_emb_sum = torch.sum(query_emb, 1)
 		u = [query_emb_sum]
 
@@ -89,7 +92,8 @@ class MemN2NDialog(nn.Module):
 			embed_stories_mask = torch.stack(embed_stories_mask, 1)
 
 			# aplly stories mask (add_)
-			embed_stories.add_(embed_stories_mask)
+			# embed_stories.add_(embed_stories_mask)
+			embed_stories = torch.cat([embed_stories, embed_stories_mask], 3)
 			embed_stories_sum = torch.sum(embed_stories, 2)
 
 			# get attention
@@ -105,7 +109,15 @@ class MemN2NDialog(nn.Module):
 
 			u.append(new_u)
 
+		# embed candidates
 		candidates_emb = self.embed_W(self.candidates)
+
+		# embed candidates mask
+		candidates_mask_emb = self.embed_W(self.candidates_mask)
+
+		# apply mask (add_)
+		# candidates_emb.add_(candidates_mask_emb)
+		candidates_emb = torch.cat([candidates_emb, candidates_mask_emb], 2)
 		candidates_emb_sum = torch.sum(candidates_emb, 1)
 		output = torch.mm(new_u, torch.transpose(candidates_emb_sum, 0, 1))
 

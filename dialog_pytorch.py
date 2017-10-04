@@ -129,14 +129,15 @@ class chatBot(object):
 		self.build_vocab(data, candidates)
 		_, self.word2type = load_type_dict(self.data_dir)
 		# self.candidates_vec=vectorize_candidates_sparse(candidates,self.word_idx)
-		self.candidates_vec = vectorize_candidates(
-			candidates, self.word_idx, self.candidate_sentence_size)
+		self.candidates_vec, self.candidates_mask = vectorize_candidates(
+			candidates, self.word_idx, self.candidate_sentence_size, self.word2type)
 		self.model = MemN2NDialog(self.batch_size, 
 									self.vocab_size, 
 									self.n_cand, 
 									self.sentence_size, 
 									self.embedding_size, 
 									self.candidates_vec,
+									self.candidates_mask,
 									hops=self.hops, 
 									max_grad_norm=self.max_grad_norm, 
 									task_id=task_id)

@@ -112,13 +112,16 @@ def get_dialogs(f,candid_dic):
         return parse_dialogs_per_response(f.readlines(),candid_dic)
 
 
-def vectorize_candidates(candidates,word_idx,sentence_size):
+def vectorize_candidates(candidates,word_idx,sentence_size,word2type):
     # shape=(len(candidates),sentence_size)
     C=[]
+    C_mask=[]
     for i,candidate in enumerate(candidates):
         lc=max(0,sentence_size-len(candidate))
         C.append([word_idx[w] if w in word_idx else 0 for w in candidate] + [0] * lc)
-    return Variable(torch.from_numpy(np.array(C))).view(len(candidates), sentence_size)
+        C_mask.append([word_idx[word2type[w]] if w in word2type else 0 for w in candidate] + [0] * lc)
+    return Variable(torch.from_numpy(np.array(C))).view(len(candidates), sentence_size), \
+            Variable(torch.from_numpy(np.array(C_mask))).view(len(candidates), sentence_size)
 
 
 def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, max_memory_size, word2type):
