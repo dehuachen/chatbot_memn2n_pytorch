@@ -65,46 +65,6 @@ def tokenize(sent):
     return result
 
 
-# def parse_dialogs(lines,candid_dic):
-#     '''
-#         Parse dialogs provided in the babi tasks format
-#     '''
-#     data=[]
-#     context=[]
-#     u=None
-#     r=None
-#     for line in lines:
-#         line=str.lower(line.strip())
-#         if line:
-#             nid, line = line.split(' ', 1)
-#             nid = int(nid)
-#             if '\t' in line:
-#                 u, r = line.split('\t')
-#                 u = tokenize(u)
-#                 r = tokenize(r)
-#                 # temporal encoding, and utterance/response encoding
-#                 u.append('$u')
-#                 u.append('#'+str(nid))
-#                 r.append('$r')
-#                 r.append('#'+str(nid))
-#                 context.append(u)
-#                 context.append(r)
-#             else:
-#                 r=tokenize(line)
-#                 r.append('$r')
-#                 r.append('#'+str(nid))
-#                 context.append(r)
-#         else:
-#             context=[x for x in context[:-2] if x]
-#             u=u[:-2]
-#             r=r[:-2]
-#             key=' '.join(r)
-#             if key in candid_dic:
-#                 r=candid_dic[key]
-#                 data.append((context, u,  r))
-#             context=[]
-#     return data
-
 def parse_dialogs_per_response(lines,candid_dic):
     '''
         Parse dialogs provided in the babi tasks format
@@ -151,15 +111,6 @@ def get_dialogs(f,candid_dic):
     with open(f) as f:
         return parse_dialogs_per_response(f.readlines(),candid_dic)
 
-# def vectorize_candidates_sparse(candidates,word_idx):
-#     shape=(len(candidates),len(word_idx)+1)
-#     indices=[]
-#     values=[]
-#     for i,candidate in enumerate(candidates):
-#         for w in candidate:
-#             indices.append([i,word_idx[w]])
-#             values.append(1.0)
-#     return tf.SparseTensor(indices,values,shape)
 
 def vectorize_candidates(candidates,word_idx,sentence_size):
     # shape=(len(candidates),sentence_size)
@@ -170,7 +121,7 @@ def vectorize_candidates(candidates,word_idx,sentence_size):
     return Variable(torch.from_numpy(np.array(C))).view(len(candidates), sentence_size)
 
 
-def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, max_memory_size):
+def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, max_memory_size, word2type):
     """
     Vectorize stories and queries.
 
@@ -184,27 +135,59 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
     S = []
     Q = []
     A = []
+    S_mask = []
+    Q_mask = []
     data.sort(key=lambda x:len(x[0]),reverse=True)
     for i, (story, query, answer) in enumerate(data):
         if i%batch_size==0:
             memory_size=max(1,min(max_memory_size,len(story)))
         ss = []
+        ss_mask = []
         for i, sentence in enumerate(story, 1):
             ls = max(0, sentence_size - len(sentence))
             ss.append([word_idx[w] if w in word_idx else 0 for w in sentence] + [0] * ls)
+            ss_mask.append([word_idx[word2type[w]] if w in word2type else 0 for w in sentence] + [0] * ls)
 
         # take only the most recent sentences that fit in memory
         ss = ss[::-1][:memory_size][::-1]
+        ss_mask = ss_mask[::-1][:memory_size][::-1]
 
         # pad to memory_size
         lm = max(0, memory_size - len(ss))
         for _ in range(lm):
             ss.append([0] * sentence_size)
+            ss_mask.append([0] * sentence_size)
 
         lq = max(0, sentence_size - len(query))
         q = [word_idx[w] if w in word_idx else 0 for w in query] + [0] * lq
+        q_mask = [word_idx[word2type[w]] if w in word2type else 0 for w in query] + [0] * lq
 
         S.append(np.array(ss))
         Q.append(np.array(q))
         A.append(np.array(answer))
-    return S, Q, A
+        S_mask.append(np.array(ss_mask))
+        Q_mask.append(np.array(q_mask))
+    return S, Q, A, S_mask, Q_mask
+
+
+def load_type_dict(data_dir):
+    with open(os.path.join(data_dir, 'dialog-babi-kb-all.txt')) as f:
+        type_dict = {'R_cuisine': [], 
+                        'R_location': [], 
+                        'R_price': [], 
+                        'R_rating': [], 
+                        'R_address': [], 
+                        'R_phone': [], 
+                        'R_number': [] }
+        word2type = {}
+
+        for i,line in enumerate(f):
+            type_, word = line.strip().split('\t')
+            type_ = type_.split(' ')[2]
+            type_dict[type_].append(word)
+
+            if word not in word2type:
+                word2type[word] = type_
+
+        return type_dict, word2type
+

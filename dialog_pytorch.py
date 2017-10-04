@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, tokenize
+from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, tokenize, load_type_dict
 from sklearn import metrics
 from memn2n_pytorch import MemN2NDialog
 from itertools import chain
@@ -127,6 +127,7 @@ class chatBot(object):
 			self.data_dir, self.task_id, self.candid2indx, self.OOV)
 		data = self.trainData + self.testData + self.valData
 		self.build_vocab(data, candidates)
+		_, self.word2type = load_type_dict(self.data_dir)
 		# self.candidates_vec=vectorize_candidates_sparse(candidates,self.word_idx)
 		self.candidates_vec = vectorize_candidates(
 			candidates, self.word_idx, self.candidate_sentence_size)
@@ -142,7 +143,9 @@ class chatBot(object):
 
 
 	def build_vocab(self, data, candidates):
-		vocab = reduce(lambda x, y: x | y, (set(
+		vocab = {'R_cuisine', 'R_location', \
+		'R_price', 'R_rating', 'R_address', 'R_phone', 'R_number'}
+		vocab |= reduce(lambda x, y: x | y, (set(
 			list(chain.from_iterable(s)) + q) for s, q, a in data))
 		vocab |= reduce(lambda x, y: x | y, (set(candidate)
 											 for candidate in candidates))
@@ -182,14 +185,16 @@ class chatBot(object):
 				continue
 			u = tokenize(line)
 			data = [(context, u, -1)]
-			s, q, a = vectorize_data(
-				data, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
+			s, q, a, s_mask, q_mask = vectorize_data(
+				data, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 
 			s = Variable(torch.from_numpy(np.stack(s)))
 			q = Variable(torch.from_numpy(np.stack(q)))
 			a = Variable(torch.from_numpy(np.stack(a)))
+			s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
+			q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
 
-			preds = list(self.model.predict(s, q).data.numpy().tolist())
+			preds = list(self.model.predict(s, q, s_mask, q_mask).data.numpy().tolist())
 			r = self.indx2candid[preds[0]]
 			print(r)
 			r = tokenize(r)
@@ -202,10 +207,10 @@ class chatBot(object):
 			nid += 1
 
 	def train(self):
-		trainS, trainQ, trainA = vectorize_data(
-			self.trainData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
-		valS, valQ, valA = vectorize_data(
-			self.valData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
+		trainS, trainQ, trainA, train_s_mask, train_q_mask = vectorize_data(
+			self.trainData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
+		valS, valQ, valA, val_s_mask, val_q_mask = vectorize_data(
+			self.valData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 		n_train = len(trainS)
 		n_val = len(valS)
 		print("Training Size", n_train)
@@ -223,25 +228,30 @@ class chatBot(object):
 			total_cost = 0.0
 
 			start_time = timeit.default_timer()
-
+			print('epoch: {}'.format(t))
 			for start, end in batches:
 				s = trainS[start:end]
 				q = trainQ[start:end]
 				a = trainA[start:end]
+				s_mask = train_s_mask[start:end]
+				q_mask = train_q_mask[start:end]
 
 				s = Variable(torch.from_numpy(np.stack(s)))
 				q = Variable(torch.from_numpy(np.stack(q)))
 				a = Variable(torch.from_numpy(np.stack(a)))
+				s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
+				q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
 
-				cost_t = self.model.batch_fit(s, q, a)
+				cost_t = self.model.batch_fit(s, q, a, s_mask, q_mask)
 				total_cost += cost_t.data[0]
 
 			end_time = timeit.default_timer()
 			times.append(end_time - start_time)
 
 			if t % self.evaluation_interval == 0:
-				train_preds = self.batch_predict(trainS, trainQ, n_train)
-				val_preds = self.batch_predict(valS, valQ, n_val)
+				print('test: {}'.format(t))
+				train_preds = self.batch_predict(trainS, trainQ, n_train, train_s_mask, train_q_mask)
+				val_preds = self.batch_predict(valS, valQ, n_val, val_s_mask, val_q_mask)
 				train_acc = metrics.accuracy_score(
 					np.array(train_preds), trainA)
 				val_acc = metrics.accuracy_score(val_preds, valA)
@@ -261,31 +271,41 @@ class chatBot(object):
 						'optimizer' : self.model.optimizer.state_dict(),
 					}, True, filename=self.model_dir+'best_model')
 
+		print('-----------------------')
+		print('Best Validation Accuracy:', best_validation_accuracy)
+		print('Total Time: ', np.sum(times))
+		print('-----------------------')
+
+
 	def test(self):
 		load_checkpoit(self.model, self.model.optimizer, self.model_dir + 'best_model')
 		
 		if self.isInteractive:
 			self.interactive()
 		else:
-			testS, testQ, testA = vectorize_data(
-				self.testData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
+			testS, testQ, testA, test_s_mask, test_q_mask = vectorize_data(
+				self.testData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 			n_test = len(testS)
 			print("Testing Size", n_test)
-			test_preds = self.batch_predict(testS, testQ, n_test)
+			test_preds = self.batch_predict(testS, testQ, n_test, test_s_mask, test_q_mask)
 			test_acc = metrics.accuracy_score(test_preds, testA)
 			print("Testing Accuracy:", test_acc)
 
-	def batch_predict(self, S, Q, n):
+	def batch_predict(self, S, Q, n, train_s_mask, train_q_mask):
 		preds = []
 		for start in range(0, n, self.batch_size):
 			end = start + self.batch_size
 			s = S[start:end]
 			q = Q[start:end]
+			s_mask = train_s_mask[start:end]
+			q_mask = train_q_mask[start:end]
 
-			s = Variable(torch.from_numpy(np.array(s)))
-			q = Variable(torch.from_numpy(np.array(q)))
+			s = Variable(torch.from_numpy(np.stack(s)))
+			q = Variable(torch.from_numpy(np.stack(q)))
+			s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
+			q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
 
-			pred = self.model.predict(s, q)
+			pred = self.model.predict(s, q, s_mask, q_mask)
 			preds += list(pred.data.numpy().tolist())
 		return preds
 

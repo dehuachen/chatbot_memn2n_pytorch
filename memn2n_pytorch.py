@@ -58,23 +58,38 @@ class MemN2NDialog(nn.Module):
 
 
 
-	def forward(self, stories, query):
-		return self.inference(stories, query)
+	def forward(self, stories, query, stories_mask, query_mask):
+		return self.inference(stories, query, stories_mask, query_mask)
 
 
 
-	def inference(self, stories, query):
+	def inference(self, stories, query, stories_mask, query_mask):
 
 		# embed query
 		query_emb = self.embed_A(query)
+
+		# embed query mask
+		query_mask_emb = self.embed_A(query_mask)
+
+		# aplly query mask (add_)
+		query_emb.add_(query_mask_emb)
 		query_emb_sum = torch.sum(query_emb, 1)
 		u = [query_emb_sum]
 
 		for _ in range(self.hops):
 
+			# embed stories
 			stories_unbound = torch.unbind(stories, 1)
 			embed_stories = [self.embed_A(story) for story in stories_unbound]
 			embed_stories = torch.stack(embed_stories, 1)
+
+			# embed stories mask
+			stories_mask_unbound = torch.unbind(stories_mask, 1)
+			embed_stories_mask = [self.embed_A(story) for story in stories_mask_unbound]
+			embed_stories_mask = torch.stack(embed_stories_mask, 1)
+
+			# aplly stories mask (add_)
+			embed_stories.add_(embed_stories_mask)
 			embed_stories_sum = torch.sum(embed_stories, 2)
 
 			# get attention
@@ -98,10 +113,10 @@ class MemN2NDialog(nn.Module):
 
 
 
-	def batch_fit(self, stories, query, answers):
+	def batch_fit(self, stories, query, answers, stories_mask, query_mask):
 		self.train()
 		# calculate loss
-		logits = self.forward(stories, query)
+		logits = self.forward(stories, query, stories_mask, query_mask)
 		cross_entropy = self.cross_entropy_loss(logits, answers)
 		loss = torch.sum(cross_entropy)
 		
@@ -123,10 +138,10 @@ class MemN2NDialog(nn.Module):
 		self.optimizer.step()
 
 
-	def predict(self, stories, query):
+	def predict(self, stories, query, stories_mask, query_mask):
 		self.eval()
 		# calculate loss
-		logits = self.forward(stories, query)
+		logits = self.forward(stories, query, stories_mask, query_mask)
 		_, preds = torch.max(logits, 1)
 		
 		return preds
