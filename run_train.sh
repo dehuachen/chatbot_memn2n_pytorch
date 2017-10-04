@@ -1,3 +1,5 @@
+mkdir -p log
+
 max=6
 for i in `seq 1 $max`
 do
