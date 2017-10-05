@@ -33,7 +33,7 @@ parser.add_argument("-epsilon", type=float, default=1e-8,
 					help="epsilon (default=1e-8)")
 parser.add_argument("-max_grad_norm", type=float, default=40.0, 
 					help="Clip gradients to this norm")
-parser.add_argument("-evaluation_interval", type=int, default=10, 
+parser.add_argument("-evaluation_interval", type=int, default=5, 
 					help="Evaluate and print results every x epochs")
 parser.add_argument("-batch_size", type=int, default=32, 
 					help="Batch size for training")
@@ -95,7 +95,7 @@ class chatBot(object):
 				learning_rate=0.001,
 				epsilon=1e-8,
 				max_grad_norm=40.0,
-				evaluation_interval=10,
+				evaluation_interval=5,
 				hops=3,
 				epochs=200,
 				embedding_size=20):

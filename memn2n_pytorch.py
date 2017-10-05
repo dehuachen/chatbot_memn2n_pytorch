@@ -2,20 +2,52 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
+import math
 
 
-# grads_and_vars = self.opt.compute_gradients(loss_op)
-# grads_and_vars = [(tf.clip_by_norm(g, self.max_grad_norm), v)
-# 				  for g, v in grads_and_vars]
-# # grads_and_vars = [(add_gradient_noise(g), v) for g,v in grads_and_vars]
-# nil_grads_and_vars = []
-# for g, v in grads_and_vars:
-# 	if v.name in self.nil_vars:
-# 		nil_grads_and_vars.append((zero_nil_slot(g), v))
-# 	else:
-# 		nil_grads_and_vars.append((g, v))
-# train_op = self.opt.apply_gradients(
-# 	nil_grads_and_vars, name="train_op")
+
+class Encoder(nn.Module):
+	"""docstring for Encoder"""
+	def __init__(self, window_size, embedding_size, sentence_size, num_features=10):
+		super(Encoder, self).__init__()
+		
+		self.window_size = window_size
+		self.embedding_size = embedding_size
+		self.sentence_size = sentence_size
+		self.num_features = num_features
+		self.output_H = sentence_size
+
+		self.conv1 = nn.Conv2d(1, self.num_features, (self.window_size, self.embedding_size))
+		self.output_H = (self.output_H - self.window_size) + 1
+		self.conv2 = nn.Conv2d(self.num_features, self.num_features, (self.window_size, 1))
+		self.output_H = (self.output_H - self.window_size) + 1
+
+		self.linear = nn.Linear(self.output_H * self.num_features, self.embedding_size)
+
+		for m in self.modules():
+			if isinstance(m, nn.Conv2d):
+				n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+				m.weight.data.normal_(0, math.sqrt(2. / n))
+			elif isinstance(m, nn.Linear):
+				n = self.output_H * self.num_features
+				m.weight.data.normal_(0, math.sqrt(2. / n))
+			elif isinstance(m, nn.BatchNorm2d):
+				m.weight.data.fill_(1)
+				m.bias.data.zero_()
+
+
+
+	def forward(self, sentence):
+
+		out = sentence.contiguous().view(-1, 1, self.sentence_size, self.embedding_size)
+		out = nn.functional.relu(self.conv1(out))
+		out = nn.functional.relu(self.conv2(out))
+		out = self.linear(out.view(-1, self.output_H * self.num_features))
+		
+		return out
+
+
+
 
 class MemN2NDialog(nn.Module):
 	"""docstring for MemN2NDialog"""
@@ -49,6 +81,8 @@ class MemN2NDialog(nn.Module):
 		self.softmax = nn.Softmax()
 		self.cross_entropy_loss = nn.CrossEntropyLoss()
 
+		# self.encoder = Encoder(3, embedding_size * 2, sentence_size)
+
 		# weights initialization
 		for m in self.modules():
 			if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
@@ -77,6 +111,7 @@ class MemN2NDialog(nn.Module):
 		# query_emb.add_(query_mask_emb)
 		query_emb = torch.cat([query_emb, query_mask_emb], 2)
 		query_emb_sum = torch.sum(query_emb, 1)
+		# query_emb_sum = self.encoder(query_emb)
 		u = [query_emb_sum]
 
 		for _ in range(self.hops):
@@ -95,6 +130,9 @@ class MemN2NDialog(nn.Module):
 			# embed_stories.add_(embed_stories_mask)
 			embed_stories = torch.cat([embed_stories, embed_stories_mask], 3)
 			embed_stories_sum = torch.sum(embed_stories, 2)
+			# embed_stories_sum = torch.unbind(embed_stories, 1)
+			# embed_stories_sum = [self.encoder(story) for story in embed_stories_sum]
+			# embed_stories_sum = torch.stack(embed_stories_sum, 1)
 
 			# get attention
 			u_temp = torch.transpose(torch.unsqueeze(u[-1], -1), 1, 2)
@@ -119,6 +157,7 @@ class MemN2NDialog(nn.Module):
 		# candidates_emb.add_(candidates_mask_emb)
 		candidates_emb = torch.cat([candidates_emb, candidates_mask_emb], 2)
 		candidates_emb_sum = torch.sum(candidates_emb, 1)
+		# candidates_emb_sum = self.encoder(candidates_emb)
 		output = torch.mm(new_u, torch.transpose(candidates_emb_sum, 0, 1))
 
 		return output
