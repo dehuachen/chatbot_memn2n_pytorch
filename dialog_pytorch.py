@@ -97,7 +97,7 @@ class chatBot(object):
 				max_grad_norm=40.0,
 				evaluation_interval=1,
 				hops=3,
-				epochs=200,
+				epochs=10,
 				embedding_size=20):
 
 		self.data_dir = data_dir
@@ -232,7 +232,7 @@ class chatBot(object):
 			print('creating candidate mask')
 			all_entity_dict = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, train_entity_dict)
 			print('candidate mask creation finished')
-			for start, end in batches[:2]:
+			for start, end in batches:
 				s = trainS[start:end]
 				q = trainQ[start:end]
 				a = trainA[start:end]
