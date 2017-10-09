@@ -229,16 +229,19 @@ class chatBot(object):
 
 			start_time = timeit.default_timer()
 			print('epoch: {}'.format(t))
-			for start, end in batches[:20]:
+			print('creating candidate mask')
+			all_entity_dict = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, train_entity_dict)
+			print('candidate mask creation finished')
+			for start, end in batches[:2]:
 				s = trainS[start:end]
 				q = trainQ[start:end]
 				a = trainA[start:end]
-				entity_dict = train_entity_dict[start:end]
+				entity_dict = all_entity_dict[start:end]
 
 				s = Variable(torch.from_numpy(np.stack(s)))
 				q = Variable(torch.from_numpy(np.stack(q)))
 				a = Variable(torch.from_numpy(np.stack(a)))
-				E = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, entity_dict)
+				E = Variable(torch.from_numpy(entity_dict))
 
 				cost_t = self.model.batch_fit(s, q, a, E)
 				total_cost += cost_t.data[0]
@@ -291,6 +294,7 @@ class chatBot(object):
 
 	def batch_predict(self, S, Q, n, all_entity_dict):
 		preds = []
+		all_entity_dict = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, all_entity_dict)
 		for start in range(0, n, self.batch_size):
 			end = start + self.batch_size
 			s = S[start:end]
@@ -299,7 +303,7 @@ class chatBot(object):
 
 			s = Variable(torch.from_numpy(np.stack(s)))
 			q = Variable(torch.from_numpy(np.stack(q)))			
-			E = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, entity_dict)
+			E = Variable(torch.from_numpy(entity_dict))
 
 			pred = self.model.predict(s, q, E)
 			preds += list(pred.data.numpy().tolist())

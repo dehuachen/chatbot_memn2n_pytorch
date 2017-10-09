@@ -190,7 +190,7 @@ def create_candidates_mask(candidates,word_idx,sentence_size,entity_dict):
         for j, candidate in enumerate(candidates):
             c_mask.append([batch[c] if c in batch else 0 for c in candidate])
         C_mask.append(c_mask)
-    return Variable(torch.from_numpy(np.array(C_mask)))
+    return np.array(C_mask)
 
 
 def load_type_dict(data_dir):

@@ -101,21 +101,15 @@ class MemN2NDialog(nn.Module):
 
 	def inference(self, stories, query, E):
 
-		batch_size = E.size(0)
-
 		# embed query
 		query_emb = self.embed_A(query)
 		query_emb_sum = torch.sum(query_emb, 1)
-		# query_emb_sum = self.encoder(query_emb)
 		u = [query_emb_sum]
 
 		for _ in range(self.hops):
 
 			# embed stories
-			stories_unbound = torch.unbind(stories, 1)
-			embed_stories = [self.embed_A(story) for story in stories_unbound]
-			embed_stories = torch.stack(embed_stories, 1)
-
+			embed_stories = self.embed3D(stories, self.embed_A)
 			embed_stories_sum = torch.sum(embed_stories, 2)
 
 			# get attention
@@ -126,28 +120,21 @@ class MemN2NDialog(nn.Module):
 			attention = torch.unsqueeze(attention, -1)
 			attn_stories = torch.sum(attention*embed_stories_sum, 1)
 
-			# output = self.linear_H(torch.cat([u[-1], attn_stories], 1))
 			new_u = self.linear_H(u[-1]) + attn_stories
 
 			u.append(new_u)
 
 		# embed candidates
-		candidates = torch.unsqueeze(self.candidates, 0).repeat(batch_size, 1, 1)
-		# print("candidates", candidates.size())
+		num_repeat = E.size(0)
+		candidates = torch.unsqueeze(self.candidates, 0).repeat(num_repeat, 1, 1)
 		new_u = new_u.view(-1, 1, self.embedding_size)
-		# print("new_u", new_u.size())
 		candidates_emb = self.embed3D(candidates, self.embed_W)
-		# print("candidates_emb", candidates_emb.size())
 		c_mask = self.embed3D(E, self.embed_W)
-		# print("c_mask", c_mask.size())
 		candidates_emb.add_(c_mask)
 		candidates_emb_sum = torch.sum(candidates_emb, 2)
-		# print(candidates_emb_sum.size())
-		# input()
+
 		output = torch.bmm(new_u, torch.transpose(candidates_emb_sum, 1, 2))
-		# print(output.size())
 		output = output.view(-1, self.candidates_size)
-		# print(output.size())
 
 		return output
 
