@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, tokenize, load_type_dict
+from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, tokenize, load_type_dict, create_candidates_mask
 from sklearn import metrics
 from memn2n_pytorch import MemN2NDialog
 from itertools import chain
@@ -95,7 +95,7 @@ class chatBot(object):
 				learning_rate=0.001,
 				epsilon=1e-8,
 				max_grad_norm=40.0,
-				evaluation_interval=5,
+				evaluation_interval=1,
 				hops=3,
 				epochs=200,
 				embedding_size=20):
@@ -144,8 +144,8 @@ class chatBot(object):
 
 
 	def build_vocab(self, data, candidates):
-		vocab = {'R_cuisine', 'R_location', \
-		'R_price', 'R_rating', 'R_address', 'R_phone', 'R_number'}
+		vocab = {'R_CUISINE', 'R_LOCATION', \
+		'R_PRICE', 'R_RATING', 'R_ADDRESS', 'R_PHONE', 'R_NUMBER'}
 		vocab |= reduce(lambda x, y: x | y, (set(
 			list(chain.from_iterable(s)) + q) for s, q, a in data))
 		vocab |= reduce(lambda x, y: x | y, (set(candidate)
@@ -186,16 +186,15 @@ class chatBot(object):
 				continue
 			u = tokenize(line)
 			data = [(context, u, -1)]
-			s, q, a, s_mask, q_mask = vectorize_data(
+			s, q, a, entity_dict = vectorize_data(
 				data, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 
 			s = Variable(torch.from_numpy(np.stack(s)))
 			q = Variable(torch.from_numpy(np.stack(q)))
 			a = Variable(torch.from_numpy(np.stack(a)))
-			s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
-			q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
+			E = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, entity_dict)
 
-			preds = list(self.model.predict(s, q, s_mask, q_mask).data.numpy().tolist())
+			preds = list(self.model.predict(s, q, E).data.numpy().tolist())
 			r = self.indx2candid[preds[0]]
 			print(r)
 			r = tokenize(r)
@@ -208,9 +207,9 @@ class chatBot(object):
 			nid += 1
 
 	def train(self):
-		trainS, trainQ, trainA, train_s_mask, train_q_mask = vectorize_data(
+		trainS, trainQ, trainA, train_entity_dict = vectorize_data(
 			self.trainData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
-		valS, valQ, valA, val_s_mask, val_q_mask = vectorize_data(
+		valS, valQ, valA, val_entity_dict = vectorize_data(
 			self.valData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 		n_train = len(trainS)
 		n_val = len(valS)
@@ -230,29 +229,27 @@ class chatBot(object):
 
 			start_time = timeit.default_timer()
 			print('epoch: {}'.format(t))
-			for start, end in batches:
+			for start, end in batches[:20]:
 				s = trainS[start:end]
 				q = trainQ[start:end]
 				a = trainA[start:end]
-				s_mask = train_s_mask[start:end]
-				q_mask = train_q_mask[start:end]
+				entity_dict = train_entity_dict[start:end]
 
 				s = Variable(torch.from_numpy(np.stack(s)))
 				q = Variable(torch.from_numpy(np.stack(q)))
 				a = Variable(torch.from_numpy(np.stack(a)))
-				s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
-				q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
+				E = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, entity_dict)
 
-				cost_t = self.model.batch_fit(s, q, a, s_mask, q_mask)
+				cost_t = self.model.batch_fit(s, q, a, E)
 				total_cost += cost_t.data[0]
-
+				
 			end_time = timeit.default_timer()
 			times.append(end_time - start_time)
 
 			if t % self.evaluation_interval == 0:
 				print('test: {}'.format(t))
-				train_preds = self.batch_predict(trainS, trainQ, n_train, train_s_mask, train_q_mask)
-				val_preds = self.batch_predict(valS, valQ, n_val, val_s_mask, val_q_mask)
+				train_preds = self.batch_predict(trainS, trainQ, n_train, train_entity_dict)
+				val_preds = self.batch_predict(valS, valQ, n_val, val_entity_dict)
 				train_acc = metrics.accuracy_score(
 					np.array(train_preds), trainA)
 				val_acc = metrics.accuracy_score(val_preds, valA)
@@ -284,29 +281,27 @@ class chatBot(object):
 		if self.isInteractive:
 			self.interactive()
 		else:
-			testS, testQ, testA, test_s_mask, test_q_mask = vectorize_data(
+			testS, testQ, testA, test_entity_dict = vectorize_data(
 				self.testData, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size, self.word2type)
 			n_test = len(testS)
 			print("Testing Size", n_test)
-			test_preds = self.batch_predict(testS, testQ, n_test, test_s_mask, test_q_mask)
+			test_preds = self.batch_predict(testS, testQ, n_test, test_entity_dict)
 			test_acc = metrics.accuracy_score(test_preds, testA)
 			print("Testing Accuracy:", test_acc)
 
-	def batch_predict(self, S, Q, n, train_s_mask, train_q_mask):
+	def batch_predict(self, S, Q, n, all_entity_dict):
 		preds = []
 		for start in range(0, n, self.batch_size):
 			end = start + self.batch_size
 			s = S[start:end]
 			q = Q[start:end]
-			s_mask = train_s_mask[start:end]
-			q_mask = train_q_mask[start:end]
+			entity_dict = all_entity_dict[start:end]
 
 			s = Variable(torch.from_numpy(np.stack(s)))
-			q = Variable(torch.from_numpy(np.stack(q)))
-			s_mask = Variable(torch.from_numpy(np.stack(s_mask)))
-			q_mask = Variable(torch.from_numpy(np.stack(q_mask)))
+			q = Variable(torch.from_numpy(np.stack(q)))			
+			E = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, entity_dict)
 
-			pred = self.model.predict(s, q, s_mask, q_mask)
+			pred = self.model.predict(s, q, E)
 			preds += list(pred.data.numpy().tolist())
 		return preds
 

@@ -75,7 +75,7 @@ class MemN2NDialog(nn.Module):
 		self.candidates_mask = candidates_mask
 
 		self.embed_A = nn.Embedding(self.vocab_size, self.embedding_size) 
-		self.linear_H = nn.Linear(self.embedding_size * 2, self.embedding_size * 2)
+		self.linear_H = nn.Linear(self.embedding_size, self.embedding_size)
 		self.embed_W = nn.Embedding(self.vocab_size, self.embedding_size)
 
 		self.softmax = nn.Softmax()
@@ -94,22 +94,17 @@ class MemN2NDialog(nn.Module):
 
 
 
-	def forward(self, stories, query, stories_mask, query_mask):
-		return self.inference(stories, query, stories_mask, query_mask)
+	def forward(self, stories, query, E):
+		return self.inference(stories, query, E)
 
 
 
-	def inference(self, stories, query, stories_mask, query_mask):
+	def inference(self, stories, query, E):
+
+		batch_size = E.size(0)
 
 		# embed query
 		query_emb = self.embed_A(query)
-
-		# embed query mask
-		query_mask_emb = self.embed_A(query_mask)
-
-		# aplly query mask (add_)
-		# query_emb.add_(query_mask_emb)
-		query_emb = torch.cat([query_emb, query_mask_emb], 2)
 		query_emb_sum = torch.sum(query_emb, 1)
 		# query_emb_sum = self.encoder(query_emb)
 		u = [query_emb_sum]
@@ -121,18 +116,7 @@ class MemN2NDialog(nn.Module):
 			embed_stories = [self.embed_A(story) for story in stories_unbound]
 			embed_stories = torch.stack(embed_stories, 1)
 
-			# embed stories mask
-			stories_mask_unbound = torch.unbind(stories_mask, 1)
-			embed_stories_mask = [self.embed_A(story) for story in stories_mask_unbound]
-			embed_stories_mask = torch.stack(embed_stories_mask, 1)
-
-			# aplly stories mask (add_)
-			# embed_stories.add_(embed_stories_mask)
-			embed_stories = torch.cat([embed_stories, embed_stories_mask], 3)
 			embed_stories_sum = torch.sum(embed_stories, 2)
-			# embed_stories_sum = torch.unbind(embed_stories, 1)
-			# embed_stories_sum = [self.encoder(story) for story in embed_stories_sum]
-			# embed_stories_sum = torch.stack(embed_stories_sum, 1)
 
 			# get attention
 			u_temp = torch.transpose(torch.unsqueeze(u[-1], -1), 1, 2)
@@ -148,26 +132,44 @@ class MemN2NDialog(nn.Module):
 			u.append(new_u)
 
 		# embed candidates
-		candidates_emb = self.embed_W(self.candidates)
-
-		# embed candidates mask
-		candidates_mask_emb = self.embed_W(self.candidates_mask)
-
-		# apply mask (add_)
-		# candidates_emb.add_(candidates_mask_emb)
-		candidates_emb = torch.cat([candidates_emb, candidates_mask_emb], 2)
-		candidates_emb_sum = torch.sum(candidates_emb, 1)
-		# candidates_emb_sum = self.encoder(candidates_emb)
-		output = torch.mm(new_u, torch.transpose(candidates_emb_sum, 0, 1))
+		candidates = torch.unsqueeze(self.candidates, 0).repeat(batch_size, 1, 1)
+		# print("candidates", candidates.size())
+		new_u = new_u.view(-1, 1, self.embedding_size)
+		# print("new_u", new_u.size())
+		candidates_emb = self.embed3D(candidates, self.embed_W)
+		# print("candidates_emb", candidates_emb.size())
+		c_mask = self.embed3D(E, self.embed_W)
+		# print("c_mask", c_mask.size())
+		candidates_emb.add_(c_mask)
+		candidates_emb_sum = torch.sum(candidates_emb, 2)
+		# print(candidates_emb_sum.size())
+		# input()
+		output = torch.bmm(new_u, torch.transpose(candidates_emb_sum, 1, 2))
+		# print(output.size())
+		output = output.view(-1, self.candidates_size)
+		# print(output.size())
 
 		return output
 
 
 
-	def batch_fit(self, stories, query, answers, stories_mask, query_mask):
+	def embed3D(self, to_emb, embedding):
+		num_elem = to_emb.size(1)
+		elem_size = to_emb.size(2)
+
+
+		to_emb = to_emb.view(-1, num_elem * elem_size)
+		out = embedding(to_emb)
+		out = out.view(-1, num_elem, elem_size, self.embedding_size)
+
+		return out
+
+
+
+	def batch_fit(self, stories, query, answers, E):
 		self.train()
 		# calculate loss
-		logits = self.forward(stories, query, stories_mask, query_mask)
+		logits = self.forward(stories, query, E)
 		cross_entropy = self.cross_entropy_loss(logits, answers)
 		loss = torch.sum(cross_entropy)
 		
@@ -189,10 +191,10 @@ class MemN2NDialog(nn.Module):
 		self.optimizer.step()
 
 
-	def predict(self, stories, query, stories_mask, query_mask):
+	def predict(self, stories, query, E):
 		self.eval()
 		# calculate loss
-		logits = self.forward(stories, query, stories_mask, query_mask)
+		logits = self.forward(stories, query, E)
 		_, preds = torch.max(logits, 1)
 		
 		return preds

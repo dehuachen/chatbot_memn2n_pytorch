@@ -138,39 +138,59 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
     S = []
     Q = []
     A = []
-    S_mask = []
-    Q_mask = []
+    entity_in_memory = []
     data.sort(key=lambda x:len(x[0]),reverse=True)
     for i, (story, query, answer) in enumerate(data):
+        E = set()
         if i%batch_size==0:
             memory_size=max(1,min(max_memory_size,len(story)))
         ss = []
-        ss_mask = []
         for i, sentence in enumerate(story, 1):
             ls = max(0, sentence_size - len(sentence))
             ss.append([word_idx[w] if w in word_idx else 0 for w in sentence] + [0] * ls)
-            ss_mask.append([word_idx[word2type[w]] if w in word2type else 0 for w in sentence] + [0] * ls)
+            for w in sentence:
+                if w in word2type:
+                    E.add(w)
 
         # take only the most recent sentences that fit in memory
         ss = ss[::-1][:memory_size][::-1]
-        ss_mask = ss_mask[::-1][:memory_size][::-1]
 
         # pad to memory_size
         lm = max(0, memory_size - len(ss))
         for _ in range(lm):
             ss.append([0] * sentence_size)
-            ss_mask.append([0] * sentence_size)
 
         lq = max(0, sentence_size - len(query))
         q = [word_idx[w] if w in word_idx else 0 for w in query] + [0] * lq
-        q_mask = [word_idx[word2type[w]] if w in word2type else 0 for w in query] + [0] * lq
+        for w in query:
+            if w in word2type:
+                E.add(w)
+
+        entity_dict = {}
+        for w in E:
+            entity_dict[word_idx[w]] = word_idx[word2type[w]]
 
         S.append(np.array(ss))
         Q.append(np.array(q))
         A.append(np.array(answer))
-        S_mask.append(np.array(ss_mask))
-        Q_mask.append(np.array(q_mask))
-    return S, Q, A, S_mask, Q_mask
+        entity_in_memory.append(entity_dict)
+    return S, Q, A, entity_in_memory
+
+
+def create_candidates_mask(candidates,word_idx,sentence_size,entity_dict):
+    batch_size = len(entity_dict)
+    num_candidates = candidates.size(0)
+    candidates_size = candidates.size(1)
+
+    C_mask=[]
+    candidates = candidates.data.numpy()
+    for i in range(batch_size):
+        batch = entity_dict[i]
+        c_mask = []
+        for j, candidate in enumerate(candidates):
+            c_mask.append([batch[c] if c in batch else 0 for c in candidate])
+        C_mask.append(c_mask)
+    return Variable(torch.from_numpy(np.array(C_mask)))
 
 
 def load_type_dict(data_dir):
@@ -190,7 +210,7 @@ def load_type_dict(data_dir):
             type_dict[type_].append(word)
 
             if word not in word2type:
-                word2type[word] = type_
+                word2type[word] = type_.upper()
 
         return type_dict, word2type
 
