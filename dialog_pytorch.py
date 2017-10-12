@@ -60,6 +60,8 @@ parser.add_argument('-interactive', type=get_bool, default=False,
                     help='if True, interactive')
 parser.add_argument('-OOV', type=get_bool, default=False,
                     help='if True, use OOV test set')
+parser.add_argument('-continue_train', type=get_bool, default=False,
+                    help='if True, train the existed model')
 args = parser.parse_args()
 
 print("Started Task:", args.task_id)
@@ -77,11 +79,12 @@ def load_checkpoit(model, optimizer, path_to_model):
     if os.path.isfile(path_to_model):
         print("=> loading checkpoint '{}'".format(path_to_model))
         checkpoint = torch.load(path_to_model)
-        args.start_epoch = checkpoint['epoch']
+        start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         print("=> loaded checkpoint '{}' (epoch {})"
               .format(path_to_model, checkpoint['epoch']))
+        return start_epoch
     else:
         print("=> no checkpoint found at '{}'".format(path_to_model))
 
@@ -98,7 +101,7 @@ class chatBot(object):
                  max_grad_norm=40.0,
                  evaluation_interval=1,
                  hops=3,
-                 epochs=10,
+                 epochs=30,
                  embedding_size=20):
 
         self.data_dir = data_dir
@@ -225,12 +228,12 @@ class chatBot(object):
 
         times = []
 
-        # print('creating candidate mask')
-        # train_entity_dict = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, train_entity_dict)
-        # val_entity_dict = create_candidates_mask(self.candidates_vec, self.word_idx, self.sentence_size, val_entity_dict)
-        # print('candidate mask creation finished')
+        if args.continue_train:
+            start_epoch = load_checkpoit(self.model, self.model.optimizer, self.model_dir + 'best_model')
+        else:
+            start_epoch = 1
 
-        for t in range(1, self.epochs + 1):
+        for t in range(start_epoch, self.epochs + 1):
             np.random.shuffle(batches)
             total_cost = 0.0
 
